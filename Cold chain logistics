@@ -1,0 +1,185 @@
+pragma solidity ^0.4.25;
+contract logistics {
+    
+    address department;
+    
+    //设1：物流公司；2：仓库；3：零售商；4：农户；5：IoT。
+    mapping(address => uint256) legalAddress;   
+    
+    struct tran {
+        uint256 fund;   //农产品收购金
+        uint256 logisticsCost;  //物流费用
+        uint256 bond;   //风险保证金
+        uint256 fine;   //罚金
+        uint256 tFine;  //已处罚的罚金
+        address seller; //农产品卖方的以太坊地址
+        address buyer;  //农产品收购方的以太坊地址
+        address logisticser; //收购方委托运输的物流公司的以太坊地址
+        address IoTAddress; //物流公司运输时使用IoT的以太坊地址
+        
+        uint256 cargoLongitude; //揽货经度
+        uint256 cargoLatitude;   //揽货纬度
+        uint256 receiveLongitude; //收货经度
+        uint256 receiveLatitude;   //收货纬度
+        uint256 temperature;    //实时温度
+        uint256 humidity;   //实时湿度
+        uint256 temperatureMin; //最小温度
+        uint256 temperatureMax; //最大温度
+        uint256 humidityMin;    //最小湿度
+        uint256 humidityMax;    //最大湿度
+
+        
+    }
+    mapping(uint256 => tran) trans;
+    uint256 tranId;
+    
+    struct IoTInformation {
+        uint256 longitude;  //实时经度
+        uint256 latitude;   //实时纬度
+        uint256 temperature;    //实时温度
+        uint256 humidity;   //实时湿度
+        string ipfsHash;    //拍照IPFSHash
+    }
+    mapping(address => IoTInformation) IotInfo;
+    constructor() public {
+        department = msg.sender;
+    }
+
+    //第一步：监管部门录入持证经营的物流公司、仓库、超市、农户和
+    //生产合格的IoT设备的以太坊地址。
+    function inputAddress(address _legalAddress, uint256 _Type) public {
+        require(msg.sender == department);
+        legalAddress[_legalAddress] = _Type;
+    }
+    
+    //第二步：准备阶段1，农户、仓库或零售商设置进货和收货地址，
+    // 还有农产品在运输过程中存储环境的要求，交易中的各种费用金额。
+    
+    //交易中的各种费用金额
+    //收购方设置：卖方的以太坊地址、
+    //委托运输的物流公司的以太坊地址、风险保证金、罚金
+    function setTran1
+    (address _seller, address _logisticser, uint256 _bond, uint256 _fine)
+    public returns(uint256 tranId_){
+        require(legalAddress[msg.sender] == 2 || 
+        legalAddress[msg.sender] == 3);
+        tranId = tranId + 1;
+        tranId_ = tranId;
+        trans[tranId].buyer = msg.sender;
+        trans[tranId].seller = _seller;
+        trans[tranId].logisticser = _logisticser;
+        trans[tranId].bond = _bond;
+        trans[tranId].fine = _fine;
+    }
+    //卖方设置农产品收购金额及位置
+    function setTran2(uint256 _tranId, uint256 _fund, 
+    uint256 _cargoLongitude, uint256 _cargoLatitude) public {
+        require(trans[_tranId].seller == msg.sender);
+        trans[_tranId].fund = _fund;
+        trans[_tranId].cargoLongitude = _cargoLongitude;
+        trans[_tranId].cargoLatitude = _cargoLatitude;
+    }
+    //物流公司设置IoTAddress、物流费用
+    function setTran3
+    (uint256 _tranId, address _IoTAddress, uint256 _logisticsCost)
+    public {
+        require(trans[_tranId].logisticser == msg.sender);
+        require(legalAddress[_IoTAddress] == 5);
+        trans[_tranId].IoTAddress = _IoTAddress;
+        trans[_tranId].logisticsCost = _logisticsCost;
+    }
+    
+    //非金钱类参数
+    //买方设置自己的地址、农产品在运输过程中的存储环境要求
+    function setInformation1(uint256 _tranId,
+        uint256 _receiveLongitude, uint256 _receiveLatitude,
+        uint256 _temperatureMin, uint256 _temperatureMax,
+        uint256 _humidityMin, uint256 _humidityMax) public {
+        require(legalAddress[msg.sender] == 2 || 
+        legalAddress[msg.sender] == 3);
+        require(trans[_tranId].buyer == msg.sender);
+        trans[_tranId].receiveLongitude = _receiveLongitude;
+        trans[_tranId].receiveLatitude = _receiveLatitude;
+        trans[_tranId].temperatureMin = _temperatureMin;
+        trans[_tranId].temperatureMax = _temperatureMax;
+        trans[_tranId].humidityMin = _humidityMin;
+        trans[_tranId].humidityMax = _humidityMax;
+    }
+    
+    //准备阶段2，转账类，买方及物流公司向智能合约交付金钱。
+    
+    //买方向智能合约交付农产品的收购金、物流费用。
+    function payOfbuyer(uint256 _tranId) payable public {
+        require(legalAddress[msg.sender] == 2 || 
+        legalAddress[msg.sender] == 3);
+        require(trans[_tranId].buyer == msg.sender);
+        require(msg.value > (trans[_tranId].fund + trans[_tranId].logisticsCost)*1e15);
+        msg.sender.transfer(msg.value - 
+        (trans[_tranId].fund + trans[_tranId].logisticsCost)*1e15);
+    }
+    //物流公司向智能合约交付风险保证金。
+    function payOflogisticser(uint256 _tranId) payable public {
+        require(trans[_tranId].logisticser == msg.sender);
+        require(msg.value > trans[_tranId].bond*1e15);
+        msg.sender.transfer(msg.value - trans[_tranId].bond*1e15);
+    }
+    
+    //运输阶段，IoT上传环境信息。
+    //运输开始，物流公司接到农产品时主动使IoT上传一次环境信息。
+    function cargoGoods(uint256 _tranId,
+        uint256 _longitude, uint256 _latitude, 
+        uint256 _temperature, uint256 _humidity, 
+        string _ipfsHash) public{
+        require(trans[_tranId].IoTAddress == msg.sender);
+        require(_longitude == trans[_tranId].cargoLatitude &&
+        _latitude == trans[_tranId].cargoLatitude);
+        IotInfo[msg.sender].longitude = _longitude;
+        IotInfo[msg.sender].latitude = _latitude;
+        IotInfo[msg.sender].temperature = _temperature;
+        IotInfo[msg.sender].humidity = _humidity;
+        IotInfo[msg.sender].ipfsHash = _ipfsHash;
+        trans[_tranId].seller.transfer(trans[_tranId].fund * 1e15);
+    }
+    //运输过程中，IoT周期性的上传环境信息，智能合约判断是否对物流公司进行惩罚。
+    function uploadEnvironmentInformation(uint256 _tranId,
+        uint256 _longitude, uint256 _latitude, 
+        uint256 _temperature, uint256 _humidity, 
+        string _ipfsHash) public {
+        require(trans[_tranId].IoTAddress == msg.sender);
+        IotInfo[msg.sender].longitude = _longitude;
+        IotInfo[msg.sender].latitude = _latitude;
+        IotInfo[msg.sender].temperature = _temperature;
+        IotInfo[msg.sender].humidity = _humidity;
+        IotInfo[msg.sender].ipfsHash = _ipfsHash;
+        if(_temperature < trans[_tranId].temperatureMin 
+        || _temperature > trans[_tranId].temperatureMax
+        || _humidity < trans[_tranId].humidityMin
+        || _humidity > trans[_tranId].humidityMax) {
+            trans[_tranId].tFine = trans[_tranId].tFine + trans[_tranId].fine;
+        }
+    }
+    //运输结束，物流公司主动使IoT上传一次环境信息。
+    function deliveryGoods(uint256 _tranId,
+        uint256 _longitude, uint256 _latitude, 
+        uint256 _temperature, uint256 _humidity, 
+        string _ipfsHash) public {
+        require(trans[_tranId].IoTAddress == msg.sender);
+        require(_longitude == trans[_tranId].receiveLongitude &&
+        _latitude == trans[_tranId].receiveLatitude);
+        IotInfo[msg.sender].longitude = _longitude;
+        IotInfo[msg.sender].latitude = _latitude;
+        IotInfo[msg.sender].temperature = _temperature;
+        IotInfo[msg.sender].humidity = _humidity;
+        IotInfo[msg.sender].ipfsHash = _ipfsHash;
+        uint256 overBond;
+        if(trans[_tranId].tFine > trans[_tranId].bond) {
+            trans[_tranId].tFine = trans[_tranId].bond;
+            overBond = 0;
+        } else {
+            overBond = trans[_tranId].bond - trans[_tranId].tFine;
+        }
+        trans[_tranId].buyer.transfer(trans[_tranId].tFine * 1e15);
+        trans[_tranId].logisticser.transfer(overBond * 1e15);
+        trans[_tranId].logisticser.transfer(trans[_tranId].logisticsCost * 1e15);
+    }
+}
